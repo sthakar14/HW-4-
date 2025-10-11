@@ -1,0 +1,234 @@
+---
+title: "HW4-2"
+author: "Samruddhi Thakar"
+date: "2025-09-26"
+output:
+  github_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#install.packages(c("DBI", "RSQLite", "dplyr"))
+library(DBI)
+library(RSQLite)
+library(dplyr)
+library(mdsr)
+library(RMariaDB)
+
+```
+
+```{r}
+con <- dbConnect(
+  MariaDB(), host = "scidb.smith.edu",
+  user = "waiuser", password = "smith_waiDB", 
+  dbname = "wai"
+)
+Measurements <- tbl(con, "Measurements")
+num_rows = Measurements %>% count() %>% pull(n)
+print(paste0('Number of rows in Measurement table are ', num_rows ))
+```
+
+Q3. Identify what years of data are available in the flights table of the airlines database.
+
+```{r}
+con <- dbConnect_scidb("airlines")
+
+flights <- tbl(con, "flights")
+
+years_available <- dbGetQuery(con, "
+  SELECT DISTINCT year
+  FROM flights
+  ORDER BY year
+")
+print(years_available)
+```
+
+Q4. 
+Checking the cloumns available in the DB.
+```{r}
+print(head(flights))
+```
+
+1. How many domestic flights flew into Dallas-Fort Worth (DFW) on May 14, 2015?
+```{r}
+num_flights <- dbGetQuery(con, "
+  SELECT COUNT(*) AS n
+  FROM flights
+  WHERE dest = 'DFW'
+    AND year = 2015
+    AND month = 5
+    AND day = 14
+")
+print(paste0(num_flights$n, ' flights flew into DFW on May 14, 2015.'))
+```
+
+2. Of all the destinations from Chicago O’Hare (ORD), which were the most common in 2015?
+```{r}
+flights_from_ORD <- dbGetQuery(con, "
+  SELECT dest, COUNT(*) AS cnt
+  FROM flights
+  WHERE origin = 'ORD' AND year = 2015
+  GROUP BY dest
+  ORDER BY cnt DESC
+")
+# Most common:
+if (nrow(flights_from_ORD) > 0) {
+  print(paste0('Most common destination from ORD in 2015: ', flights_from_ORD$dest[1]))
+}
+
+```
+
+3. Which airport had the highest average arrival delay time in 2015?
+```{r}
+airport_delay <- dbGetQuery(con, "
+  SELECT dest, AVG(arr_delay) AS avr_arr_delay
+  FROM flights
+  WHERE year = 2015
+  GROUP BY dest
+  ORDER BY avr_arr_delay DESC
+  LIMIT 1
+")
+print(airport_delay)
+```
+
+4. How many domestic flights came into or flew out of Bradley Airport (BDL) in 2015?
+```{r}
+BDL_flights <- dbGetQuery(con, "
+  SELECT COUNT(*) AS num_flights
+  FROM flights
+  WHERE year = 2015
+    AND (origin = 'BDL' OR dest = 'BDL')
+")
+print(paste0('Total flights in and out of BDL in 2015 are ', BDL_flights$num_flights))
+
+```
+
+5. List the airline and flight number for all flights between LAX and JFK on September 26th, 2015.
+```{r}
+LAX_and_JFK <- dbGetQuery(con, "
+  SELECT carrier, flight, origin, dest
+  FROM flights
+  WHERE year = 2015
+    AND month = 9
+    AND day = 26
+    AND (
+      (origin = 'LAX' AND dest = 'JFK')
+      OR (origin = 'JFK' AND dest = 'LAX')
+    )
+")
+print(LAX_and_JFK)
+```
+Q5.
+```{r}
+library(RMariaDB)
+db <- dbConnect(
+  MariaDB(), 
+  user = "waiuser", 
+  password = "smith_waiDB", 
+  host = "scidb.smith.edu", 
+  dbname = "wai"
+)
+
+```
+
+Check what tables are available inside the WAI database.
+```{r}
+dbListTables(db)
+```
+1. How many female subjects are there in total across all studies?
+
+We need to look at subject table. Load the table and look at its structure.
+```{r}
+subjects = tbl(db, 'Subjects')
+head(subjects)
+```
+
+Now find number of female subjects. (Not sire if i should use distinct(SubjectNumber) or not. )
+```{r}
+num_females <- dbGetQuery(db, "
+  SELECT COUNT(DISTINCT SubjectNumber) AS n_female_subjects
+  FROM Subjects
+  WHERE Sex = 'Female'
+")
+print(paste0('Number of distinct female subjects in the study are ', num_females$n_female_subjects))
+```
+2. Find the average absorbance for participants for each study, ordered by highest to lowest value.
+
+```{r}
+avg_abs_by_subject <- dbGetQuery(db, "
+  SELECT SubjectNumber, AVG(Absorbance) AS avg_abs
+  FROM Measurements
+  GROUP BY SubjectNumber
+  ORDER BY avg_abs DESC
+")
+print(avg_abs_by_subject)
+
+```
+
+3. Write a query to count all the measurements with a calculated absorbance of less than 0.
+```{r}
+neg_absorbance_count <- dbGetQuery(db, "
+  SELECT COUNT(*) AS negative_count
+  FROM Measurements
+  WHERE Absorbance < 0
+")
+print(neg_absorbance_count)
+```
+
+
+Q6. The following open-ended question may require more than one query and a thoughtful response. Based on data from 2013 only, and assuming that transportation to the airport is not an issue, would you rather fly out of JFK, LaGuardia (LGA), or Newark (EWR)? Why or why not? Use the dbConnect_scidb function to connect to the airlines database.
+
+We will check all the tables in the airlines database to see which one gives us relevant information. 
+```{r}
+library(dplyr)
+library(mdsr)
+library(RMariaDB)
+
+# Connect to airlines database
+con <- dbConnect_scidb("airlines")
+
+# Reference flights table
+flights <- tbl(con, "flights")
+airports = tbl(con, 'airports')
+summ = tbl(con, 'flights_summary')
+planes = tbl(con, 'planes')
+print(head(flights))
+
+#print(head(summ))
+#print(head(airports))
+#print(head(planes))
+```
+Seems like only flights table is relevant for this question. We will look at departure delay, number of cancelled flights, and number of flights diverted starting from these 3 locations. 
+
+Count the number of times departure delay >0 in all 3 airports. 
+Count the number of times canceled > 0 and diverted >0 for all 3 airports after we find the avg of these values. Find min and max of all of these values for all the airports.
+Seems like JFK has minimum cancellations among the 3, but it has higher number of delayed flights than LGA. We will check the percent of cacelation and delays in the the table below to take more informed decision.
+
+```{r}
+airport_summary_2013 <- dbGetQuery(con, "
+  SELECT
+    origin,
+    COUNT(*) AS total_flights,
+    SUM(dep_delay > 0) AS delayed_flights,
+    SUM(cancelled > 0) AS cancelled_flights,
+    SUM(diverted > 0) AS diverted_flights,
+    AVG(CASE WHEN dep_delay IS NULL THEN NULL ELSE dep_delay END) AS avg_dep_delay,
+    MIN(dep_delay) AS min_dep_delay,
+    MAX(dep_delay) AS max_dep_delay,
+    100.0 * AVG(dep_delay > 0) AS pct_delayed,
+    100.0 * AVG(cancelled > 0) AS pct_cancelled
+  FROM flights
+  WHERE year = 2013
+    AND origin IN ('JFK', 'LGA', 'EWR')
+  GROUP BY origin
+  ORDER BY origin
+")
+print(airport_summary_2013)
+
+```
+
+Looking at the summary tables above, I would choose JFK over the other 2 airports. NWK has most delays and cancellations, and although LGA has less flight delay percent than JFK it has more percentage of cancelled flights, which is worse than delayed flights.
